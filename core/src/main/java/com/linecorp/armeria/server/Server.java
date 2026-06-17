@@ -486,7 +486,7 @@ public final class Server implements ListenableAsyncCloseable {
             final ServerPort primary = it.next();
             try {
                 doStart(primary).addListener(new ServerPortStartListener(primary))
-                                .addListener(new NextServerPortStartListener(this, it, future));
+                                .addListener(new NextServerPortStartListener(this, it, future, primary));
                 // Chain the future to set up server metrics and port mapping
                 // before server start future is completed.
                 return future.thenAccept(unused -> {
@@ -857,18 +857,22 @@ public final class Server implements ListenableAsyncCloseable {
         private final ServerStartStopSupport startStopSupport;
         private final Iterator<ServerPort> it;
         private final CompletableFuture<Void> future;
+        private final ServerPort boundPort;
 
         NextServerPortStartListener(ServerStartStopSupport startStopSupport,
-                                    Iterator<ServerPort> it, CompletableFuture<Void> future) {
+                                    Iterator<ServerPort> it, CompletableFuture<Void> future,
+                                    ServerPort boundPort) {
             this.startStopSupport = startStopSupport;
             this.it = it;
             this.future = future;
+            this.boundPort = boundPort;
         }
 
         @Override
         public void operationComplete(ChannelFuture f) throws Exception {
             if (!f.isSuccess()) {
-                future.completeExceptionally(f.cause());
+                future.completeExceptionally(
+                        ServerPortBindException.wrapIfBindFailure(boundPort, f.cause()));
                 return;
             }
             if (!it.hasNext()) {
@@ -911,7 +915,8 @@ public final class Server implements ListenableAsyncCloseable {
 
             startStopSupport.doStart(actualNext)
                             .addListener(new ServerPortStartListener(actualNext))
-                            .addListener(this);
+                            .addListener(new NextServerPortStartListener(
+                                    startStopSupport, it, future, actualNext));
         }
     }
 
